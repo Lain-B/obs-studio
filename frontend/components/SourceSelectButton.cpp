@@ -23,18 +23,14 @@
 #include <QPainter>
 #include <QStyleOptionButton>
 
+#include <utility/ThumbnailManager.hpp>
 #include <widgets/OBSBasic.hpp>
 
 SourceSelectButton::SourceSelectButton(obs_source_t *source_, QWidget *parent) : QFrame(parent)
 {
-	OBSBasic *main = reinterpret_cast<OBSBasic *>(App()->GetMainWindow());
-
-	source = source_;
+	OBSSource source = source_;
+	weakSource = OBSGetWeakRef(source);
 	const char *sourceName = obs_source_get_name(source);
-	const char *id = obs_source_get_id(source);
-
-	uint32_t flags = obs_source_get_output_flags(source);
-	bool hasVideo = (flags & OBS_SOURCE_VIDEO) == OBS_SOURCE_VIDEO;
 
 	setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
@@ -54,25 +50,12 @@ SourceSelectButton::SourceSelectButton(obs_source_t *source_, QWidget *parent) :
 	label->setAttribute(Qt::WA_TransparentForMouseEvents);
 	label->setObjectName("name");
 
-	QLabel *image = new QLabel(this);
+	image = new QLabel(this);
 	image->setObjectName("thumbnail");
 	image->setAttribute(Qt::WA_TransparentForMouseEvents);
 	image->setMinimumSize(160, 90);
 	image->setMaximumSize(160, 90);
 	image->setAlignment(Qt::AlignCenter);
-
-	QPixmap pixmap;
-	if (hasVideo) {
-		pixmap = main->thumbnailManager->getThumbnail(source);
-	}
-	if (!pixmap.isNull()) {
-		image->setPixmap(pixmap.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-	} else {
-		QIcon icon;
-		icon = main->GetSourceIcon(id);
-
-		image->setPixmap(icon.pixmap(45, 45));
-	}
 
 	layout->addWidget(image);
 	layout->addWidget(label);
@@ -131,11 +114,54 @@ void SourceSelectButton::mouseMoveEvent(QMouseEvent *event)
 	}
 
 	QMimeData *mimeData = new QMimeData;
-	std::string uuid = obs_source_get_uuid(source);
-	mimeData->setData("application/x-obs-source-uuid", uuid.c_str());
+	OBSSource source = OBSGetStrongRef(weakSource);
+	if (source) {
+		std::string uuid = obs_source_get_uuid(source);
+		mimeData->setData("application/x-obs-source-uuid", uuid.c_str());
 
-	QDrag *drag = new QDrag(this);
-	drag->setMimeData(mimeData);
-	drag->setPixmap(this->grab());
-	drag->exec(Qt::CopyAction);
+		QDrag *drag = new QDrag(this);
+		drag->setMimeData(mimeData);
+		drag->setPixmap(this->grab());
+		drag->exec(Qt::CopyAction);
+	}
+}
+
+void SourceSelectButton::setRectVisible(bool visible)
+{
+	if (rectVisible == visible) {
+		return;
+	}
+
+	rectVisible = visible;
+
+	if (visible) {
+		OBSSource source = OBSGetStrongRef(weakSource);
+		if (source) {
+			uint32_t flags = obs_source_get_output_flags(source);
+			bool hasVideo = (flags & OBS_SOURCE_VIDEO) == OBS_SOURCE_VIDEO;
+			if (hasVideo) {
+				thumbnail = ThumbnailManager::getThumbnail(source);
+				connect(thumbnail.get(), &Thumbnail::updateThumbnail, this,
+					&SourceSelectButton::thumbnailUpdated);
+			}
+		}
+	} else {
+		thumbnail.clear();
+	}
+}
+
+void SourceSelectButton::thumbnailUpdated(QPixmap pixmap)
+{
+	OBSSource source = OBSGetStrongRef(weakSource);
+	if (source) {
+		const char *id = obs_source_get_id(source);
+		if (!pixmap.isNull()) {
+			image->setPixmap(pixmap.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+		} else {
+			QIcon icon;
+			icon = OBSBasic::Get()->GetSourceIcon(id);
+
+			image->setPixmap(icon.pixmap(45, 45));
+		}
+	}
 }

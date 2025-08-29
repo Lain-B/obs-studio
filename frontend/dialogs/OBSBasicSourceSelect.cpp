@@ -187,12 +187,17 @@ OBSBasicSourceSelect::OBSBasicSourceSelect(OBSBasic *parent, undo_stack &undo_s)
 	existingFlowLayout->setSpacing(0);
 
 	/* The scroll viewport is not accessible via Designer, so we have to disable autoFillBackground here.
-	 * 
+	 *
 	 * Additionally when Qt calls setWidget on a scrollArea to set the contents widget, it force sets
 	 * autoFillBackground to true overriding whatever is set in Designer so we have to do that here too.
 	 */
 	ui->existingScrollArea->viewport()->setAutoFillBackground(false);
 	ui->existingScrollContents->setAutoFillBackground(false);
+
+	connect(ui->existingScrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this,
+		&OBSBasicSourceSelect::checkSourceVisibility);
+	connect(ui->existingScrollArea->horizontalScrollBar(), &QScrollBar::valueChanged, this,
+		&OBSBasicSourceSelect::checkSourceVisibility);
 
 	ui->createNewFrame->setVisible(false);
 
@@ -221,6 +226,26 @@ OBSBasicSourceSelect::OBSBasicSourceSelect(OBSBasic *parent, undo_stack &undo_s)
 OBSBasicSourceSelect::~OBSBasicSourceSelect()
 {
 	App()->UpdateHotkeyFocusSetting();
+}
+
+void OBSBasicSourceSelect::checkSourceVisibility(int)
+{
+	QList<QAbstractButton *> buttons = sourceButtons->buttons();
+
+	for (QAbstractButton *button : buttons) {
+		SourceSelectButton *sourceButton = qobject_cast<SourceSelectButton *>(button->parent());
+		if (sourceButton) {
+			QRect buttonRect = button->rect();
+			buttonRect.moveTo(button->mapTo(ui->existingScrollArea, buttonRect.topLeft()));
+
+			QRect scrollAreaRect(QPoint(0, 0), ui->existingScrollArea->size());
+			if (scrollAreaRect.intersects(buttonRect)) {
+				sourceButton->setRectVisible(true);
+			} else {
+				sourceButton->setRectVisible(false);
+			}
+		}
+	}
 }
 
 void OBSBasicSourceSelect::getSources()
@@ -260,6 +285,7 @@ void OBSBasicSourceSelect::updateExistingSources(int limit)
 	connect(sourceButtons, &QButtonGroup::buttonToggled, this, &OBSBasicSourceSelect::sourceButtonToggled);
 
 	ui->existingListFrame->adjustSize();
+	QTimer::singleShot(100, this, [this] { checkSourceVisibility(0); });
 }
 
 bool OBSBasicSourceSelect::enumSourcesCallback(void *data, obs_source_t *source)
@@ -288,7 +314,6 @@ bool OBSBasicSourceSelect::enumGroupsCallback(void *data, obs_source_t *source)
 		if (!existing) {
 			QPushButton *button = new QPushButton(name);
 			connect(button, &QPushButton::clicked, window, &OBSBasicSourceSelect::addSelectedSources);
-			//window->ui->existingListFrame->layout()->addWidget(button);
 		}
 	}
 
@@ -349,7 +374,6 @@ void OBSBasicSourceSelect::getSourceTypes()
 
 	ui->sourceTypeList->setCurrentItem(allSources);
 	ui->sourceTypeList->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
-	// ui->sourceTypeList->setFocus();
 
 	connect(ui->sourceTypeList, &QListWidget::currentItemChanged, this, &OBSBasicSourceSelect::sourceTypeSelected);
 }

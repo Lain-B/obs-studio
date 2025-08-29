@@ -20,10 +20,15 @@
 // #include <widgets/OBSSourceWidget.hpp>
 
 #include <QPushButton>
+#include <QPointer>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QTimer>
 
-#include <obs.h>
+#include <obs.hpp>
+
+class Thumbnail;
+class QLabel;
 
 class SourceSelectButton : public QFrame {
 	Q_OBJECT
@@ -35,6 +40,8 @@ public:
 	QPointer<QPushButton> getButton();
 	QString text();
 
+	void setRectVisible(bool visible);
+
 protected:
 	void resizeEvent(QResizeEvent *event) override;
 	void moveEvent(QMoveEvent *event) override;
@@ -42,15 +49,17 @@ protected:
 	void mouseMoveEvent(QMouseEvent *event) override;
 
 private:
-	obs_source_t *source;
+	OBSWeakSource weakSource;
+	QSharedPointer<Thumbnail> thumbnail;
+	QPointer<QLabel> image;
 
 	QPushButton *button = nullptr;
 	QVBoxLayout *layout = nullptr;
 	QLabel *label = nullptr;
+	bool rectVisible = false;
 
 	QPoint dragStartPosition;
 
-	// OBSSourceWidget *sourceWidget;
-
 private slots:
+	void thumbnailUpdated(QPixmap pixmap);
 };

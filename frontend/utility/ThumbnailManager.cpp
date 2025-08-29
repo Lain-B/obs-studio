@@ -18,186 +18,165 @@
 #include "display-helpers.hpp"
 #include "ThumbnailManager.hpp"
 #include <utility/ScreenshotObj.hpp>
+#include <widgets/OBSBasic.hpp>
 
 #include <QImageWriter>
 
-#define UPDATE_INTERVAL 50
-#define THROTTLE_LIMIT 10
-#define STALE_SECONDS 60
+#define MIN_THUMBNAIL_UPDATE_INTERVAL_MS 100
+#define MIN_SOURCE_UPDATE_INTERVAL_MS 5000
 
-ThumbnailManager::ThumbnailManager()
+using namespace std::chrono;
+
+QPointer<ThumbnailManager> ThumbnailManager::self;
+
+void ThumbnailItem::imageUpdated(QImage image)
 {
-	texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	QPixmap newPixmap;
+	if (!image.isNull()) {
+		newPixmap = QPixmap::fromImage(image);
+	}
 
-	signal_handler_t *sh = obs_get_signal_handler();
-	sigs.emplace_back(sh, "source_create", obsSourceAdded, this);
-	sigs.emplace_back(sh, "source_remove", obsSourceRemoved, this);
-
-	updateTimer = new QTimer();
-	connect(updateTimer, &QTimer::timeout, this, &ThumbnailManager::updateTick);
-	updateTimer->start(UPDATE_INTERVAL);
+	pixmap = newPixmap;
+	emit updateThumbnail(pixmap);
 }
 
-ThumbnailManager::~ThumbnailManager()
+void Thumbnail::thumbnailUpdated(QPixmap pixmap)
 {
-	updateTimer->stop();
-	disconnect(updateTimer, &QTimer::timeout, this, &ThumbnailManager::updateTick);
+	emit updateThumbnail(pixmap);
 }
 
-QPixmap ThumbnailManager::getThumbnail(OBSSource source)
+ThumbnailManager::ThumbnailManager(QObject *parent) : QObject(parent)
+{
+	connect(&updateTimer, &QTimer::timeout, this, &ThumbnailManager::updateTick);
+}
+
+ThumbnailManager::~ThumbnailManager() {}
+
+QSharedPointer<Thumbnail> ThumbnailManager::getThumbnailInternal(OBSSource source)
 {
 	std::string uuid = obs_source_get_uuid(source);
 
-	if (thumbnails.find(uuid) != thumbnails.end()) {
-		return thumbnails[uuid].pixmap;
+	for (auto it = thumbnails.begin(); it != thumbnails.end(); ++it) {
+		auto item = it->toStrongRef();
+		if (item && item->uuid == uuid) {
+			return QSharedPointer<Thumbnail>::create(item);
+		}
 	}
 
-	return QPixmap();
+	QSharedPointer<Thumbnail> thumbnail;
+	if ((obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) != 0) {
+		auto item = QSharedPointer<ThumbnailItem>::create(uuid, source);
+		thumbnail = QSharedPointer<Thumbnail>::create(item);
+		connect(item.get(), &ThumbnailItem::updateThumbnail, thumbnail.get(), &Thumbnail::thumbnailUpdated);
+
+		newThumbnails.push_back(item.toWeakRef());
+	}
+
+	updateIntervalChanged(thumbnails.size());
+	return thumbnail;
 }
 
-void ThumbnailManager::obsSourceAdded(void *param, calldata_t *calldata)
+QSharedPointer<Thumbnail> ThumbnailManager::getThumbnail(OBSSource source)
 {
-	OBSSource source((obs_source_t *)calldata_ptr(calldata, "source"));
-	QMetaObject::invokeMethod(static_cast<ThumbnailManager *>(param), "sourceAdded", Q_ARG(OBSSource, source));
+	if (!self) {
+		auto main = OBSBasic::Get();
+		if (!main) {
+			return QSharedPointer<Thumbnail>();
+		}
+
+		self = new ThumbnailManager(OBSBasic::Get());
+	}
+
+	return self->getThumbnailInternal(source);
 }
 
-void ThumbnailManager::obsSourceRemoved(void *param, calldata_t *calldata)
+bool ThumbnailManager::updatePixmap(QSharedPointer<ThumbnailItem> &sharedPointerItem)
 {
-	OBSSource source((obs_source_t *)calldata_ptr(calldata, "source"));
-	QMetaObject::invokeMethod(static_cast<ThumbnailManager *>(param), "sourceRemoved", Q_ARG(OBSSource, source));
-}
+	ThumbnailItem *item = sharedPointerItem.get();
 
-void ThumbnailManager::sourceAdded(OBSSource source)
-{
-	std::string uuid = obs_source_get_uuid(source);
-	ThumbnailItem newEntry = {uuid, {}, QPixmap()};
-
-	thumbnails.emplace(uuid, newEntry);
-}
-
-void ThumbnailManager::sourceRemoved(OBSSource source)
-{
-	std::string uuid = obs_source_get_uuid(source);
-	if (thumbnails.find(uuid) != thumbnails.end()) {
-		thumbnails.erase(uuid);
-	}
-}
-
-void ThumbnailManager::updateTick()
-{
-	if (thumbnails.size() == 0) {
-		return;
+	OBSSource source = OBSGetStrongRef(item->weakSource);
+	if (!source) {
+		return true;
 	}
 
-	if (updateThrottle > 0) {
-		updateThrottle--;
-		return;
-	}
-
-	/* updateTick() is called every UPDATE_INTERVAL ms but will only run every THROTTLE_LIMIT ticks.
-	 * This value decrements every tick and is explicitly set to 0 to force a render without throttling.
-	 * This is used for when sources have no preview at all yet, or recently became visible and are out of date.
-	 */
-	updateThrottle = THROTTLE_LIMIT;
-
-	ThumbnailItem oldestItem;
-
-	auto steadyNow = steady_clock::now();
-	long long lastUpdateLimit = STALE_SECONDS * 1000;
-
-	for (auto it = thumbnails.begin(); it != thumbnails.end();) {
-		ThumbnailItem entry = it->second;
-
-		OBSSourceAutoRelease source = obs_get_source_by_uuid(entry.uuid.c_str());
-		if (!source) {
-			it = thumbnails.erase(it);
-			continue;
-		}
-		it++;
-
-		bool isShowing = obs_source_showing(source);
-		bool isScene = obs_source_is_scene(source);
-		uint32_t flags = obs_source_get_output_flags(source);
-
-		if ((flags & OBS_SOURCE_VIDEO) == 0) {
-			continue;
-		}
-
-		if (oldestItem.isNull()) {
-			oldestItem = entry;
-		}
-
-		/* Force updates for items with no update yet */
-		if (!entry.lastUpdate.has_value()) {
-			updateThrottle = 0;
-			oldestItem = entry;
-			break;
-		}
-
-		/* Force updates for items with no image that are showing now */
-		if (entry.pixmap.isNull() && isShowing) {
-			updateThrottle = 0;
-			oldestItem = entry;
-			break;
-		}
-
-		long long timeSinceEntryUpdate = duration_cast<milliseconds>(steadyNow - *entry.lastUpdate).count();
-		if (timeSinceEntryUpdate < lastUpdateLimit) {
-			continue;
-		}
-
-		if (!isShowing && !isScene) {
-			continue;
-		}
-
-		bool entryIsOlder = (steadyNow - *entry.lastUpdate) > (steadyNow - *oldestItem.lastUpdate);
-		if (timeSinceEntryUpdate > lastUpdateLimit && entryIsOlder) {
-			oldestItem = entry;
-			continue;
-		}
-	}
-
-	if (oldestItem.isNull()) {
-		return;
-	}
-
-	OBSSourceAutoRelease source = obs_get_source_by_uuid(oldestItem.uuid.c_str());
-	if (oldestItem.lastUpdate.has_value()) {
-		long long updateTime = duration_cast<milliseconds>(steadyNow - *oldestItem.lastUpdate).count();
-		if (updateTime < lastUpdateLimit) {
-			return;
-		}
-
-		if (updateTime > lastUpdateLimit * 2) {
-			/* Update thumbnails faster when the oldest item is more than double the state limit */
-			updateThrottle = std::min(updateThrottle, 3);
-		}
+	{
+		OBSSource source = OBSGetStrongRef(item->weakSource);
+		blog(LOG_DEBUG, "cur number of thumbnails: %d. thumbnail updated: %s", (int)thumbnails.size() + 1,
+		     obs_source_get_name(source));
 	}
 
 	QPixmap pixmap;
-	thumbnails[oldestItem.uuid].pixmap = pixmap;
-	thumbnails[oldestItem.uuid].lastUpdate = steadyNow;
+	item->pixmap = pixmap;
+
 	if (source) {
 		uint32_t sourceWidth = obs_source_get_width(source);
 		uint32_t sourceHeight = obs_source_get_height(source);
 
 		if (sourceWidth == 0 || sourceHeight == 0) {
-			return;
+			return true;
 		}
 
 		auto obj = new ScreenshotObj(source);
 		obj->setSaveToFile(false);
 		obj->setSize(320, 180);
 
-		connect(obj, &ScreenshotObj::imageReady, this, [=](QImage image) {
-			QPixmap pixmap;
-			if (!image.isNull()) {
-				pixmap = QPixmap::fromImage(image);
-			}
+		connect(obj, &ScreenshotObj::imageReady, item, &ThumbnailItem::imageUpdated);
+	}
 
-			auto updateTime = steady_clock::now();
-			thumbnails[oldestItem.uuid].pixmap = pixmap;
-			thumbnails[oldestItem.uuid].lastUpdate = updateTime;
-		});
+	return true;
+}
+
+void ThumbnailManager::updateIntervalChanged(size_t newCount)
+{
+	int intervalMS = MIN_THUMBNAIL_UPDATE_INTERVAL_MS;
+	if (newThumbnails.size() == 0 && newCount > 0) {
+		int count = (int)newCount;
+		intervalMS = MIN_SOURCE_UPDATE_INTERVAL_MS / count;
+		if (intervalMS < MIN_THUMBNAIL_UPDATE_INTERVAL_MS)
+			intervalMS = MIN_THUMBNAIL_UPDATE_INTERVAL_MS;
+	}
+
+	updateTimer.start(intervalMS);
+}
+
+void ThumbnailManager::updateTick()
+{
+	QSharedPointer<ThumbnailItem> item;
+	bool changed = false;
+	bool newThumbnail = false;
+
+	while (newThumbnails.size() > 0) {
+		changed = true;
+		item = newThumbnails.front().toStrongRef();
+
+		newThumbnails.pop_front();
+		if (item) {
+			newThumbnail = true;
+			break;
+		}
+	}
+
+	if (!item) {
+		while (thumbnails.size() > 0) {
+			item = thumbnails.front().toStrongRef();
+			thumbnails.pop_front();
+			if (item) {
+				break;
+			} else {
+				changed = true;
+			}
+		}
+	}
+	if (changed && newThumbnails.size() == 0) {
+		updateIntervalChanged(thumbnails.size() + (item ? 1 : 0));
+	}
+	if (!item) {
+		return;
+	}
+
+	if (updatePixmap(item)) {
+		thumbnails.push_back(item.toWeakRef());
+	} else {
+		thumbnails.push_front(item.toWeakRef());
 	}
 }

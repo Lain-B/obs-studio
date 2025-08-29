@@ -27,7 +27,6 @@
 #include <utility/VCamConfig.hpp>
 #include <utility/platform.hpp>
 #include <utility/undo_stack.hpp>
-#include <utility/ThumbnailManager.hpp>
 
 #include <obs-frontend-internal.hpp>
 #include <obs.hpp>
@@ -328,8 +327,6 @@ public:
 	void SetDisplayAffinity(QWindow *window);
 
 	inline bool Closing() { return closing; }
-
-	ThumbnailManager *thumbnailManager;
 
 protected:
 	virtual void closeEvent(QCloseEvent *event) override;

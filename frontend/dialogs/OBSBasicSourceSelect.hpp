@@ -58,9 +58,6 @@ private:
 	static void OBSSourceRemoved(void *data, calldata_t *calldata);
 	static void OBSSourceAdded(void *data, calldata_t *calldata);
 
-	//static int getSortedButtonPosition(const QList<QPushButton *> *list, const char *name);
-	//QPointer<QPushButton> createTypeButton(const char *type, const char *name);
-
 	void getSourceTypes();
 	void setSelectedSourceType(QListWidgetItem *item);
 
@@ -74,6 +71,8 @@ private:
 	void createNewSource();
 	void addExistingSource(QString name, bool visible);
 
+	void checkSourceVisibility(int value);
+
 signals:
 	void sourcesUpdated();
 	void selectedItemsChanged();
@@ -82,8 +81,6 @@ public slots:
 	void on_createNewSource_clicked(bool checked);
 	void addSelectedSources();
 
-	// void SourceAdded(OBSSource source);
-	// void SourceRemoved(OBSSource source);
 	void sourceTypeSelected(QListWidgetItem *current, QListWidgetItem *previous);
 	void sourceTypeClicked(QListWidgetItem *clicked);
 

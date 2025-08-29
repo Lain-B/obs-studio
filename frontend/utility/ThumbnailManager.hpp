@@ -20,44 +20,70 @@
 #include <obs.hpp>
 
 #include <QObject>
+#include <QPointer>
 #include <QPixmap>
 #include <QTimer>
 
-using namespace std::chrono;
+#include <deque>
 
-struct ThumbnailItem {
+class ThumbnailItem : public QObject {
+	Q_OBJECT
+
+	friend class ThumbnailManager;
+	friend class Thumbnail;
+
 	std::string uuid;
-	std::optional<steady_clock::time_point> lastUpdate;
+	OBSWeakSource weakSource;
 	QPixmap pixmap;
 
-	bool isNull() { return uuid.empty(); }
+	void imageUpdated(QImage image);
+
+public:
+	inline ThumbnailItem(std::string uuid, OBSSource source) : uuid(uuid), weakSource(OBSGetWeakRef(source)) {}
+	inline bool isNull() const { return !weakSource || obs_weak_source_expired(weakSource); }
+
+signals:
+	void updateThumbnail(QPixmap pixmap);
+};
+
+class Thumbnail : public QObject {
+	Q_OBJECT
+
+	friend class ThumbnailManager;
+
+	QSharedPointer<ThumbnailItem> item;
+
+private slots:
+	void thumbnailUpdated(QPixmap pixmap);
+
+public:
+	inline Thumbnail(QSharedPointer<ThumbnailItem> item) : item(item) {}
+
+	inline QPixmap getPixmap() const { return item->pixmap; }
+
+signals:
+	void updateThumbnail(QPixmap pixmap);
 };
 
 class ThumbnailManager : public QObject {
 	Q_OBJECT
 
-public:
-	ThumbnailManager();
-	~ThumbnailManager();
+	static QPointer<ThumbnailManager> self;
+	QList<QWeakPointer<ThumbnailItem>> newThumbnails;
+	QList<QWeakPointer<ThumbnailItem>> thumbnails;
+	QTimer updateTimer;
 
-	QPixmap getThumbnail(OBSSource source);
-
-private:
-	std::unordered_map<std::string, ThumbnailItem> thumbnails;
-
-	QTimer *updateTimer;
-
-	std::vector<OBSSignal> sigs;
-
-	static void obsSourceAdded(void *param, calldata_t *calldata);
-	static void obsSourceRemoved(void *param, calldata_t *calldata);
-
-	int updateThrottle = 0;
+	bool updatePixmap(QSharedPointer<ThumbnailItem> &item);
 	void updateTick();
 
-	gs_texrender_t *texrender;
+	void updateIntervalChanged(size_t newCount);
 
-public slots:
-	void sourceAdded(OBSSource source);
-	void sourceRemoved(OBSSource source);
+	QSharedPointer<Thumbnail> getThumbnailInternal(OBSSource source);
+
+	ThumbnailManager(QObject *parent);
+
+public:
+	~ThumbnailManager();
+
+	static QSharedPointer<Thumbnail> getThumbnail(OBSSource source);
 };
