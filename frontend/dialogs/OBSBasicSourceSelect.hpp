@@ -71,7 +71,7 @@ private:
 	void createNewSource();
 	void addExistingSource(QString name, bool visible);
 
-	void checkSourceVisibility(int value);
+	void checkSourceVisibility();
 
 signals:
 	void sourcesUpdated();

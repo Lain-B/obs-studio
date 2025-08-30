@@ -196,6 +196,10 @@ OBSBasicSourceSelect::OBSBasicSourceSelect(OBSBasic *parent, undo_stack &undo_s)
 	ui->existingScrollArea->viewport()->setAutoFillBackground(false);
 	ui->existingScrollContents->setAutoFillBackground(false);
 
+	auto resizeSignaler = new ResizeSignaler(ui->existingScrollArea);
+	ui->existingScrollArea->installEventFilter(resizeSignaler);
+
+	connect(resizeSignaler, &ResizeSignaler::resized, this, &OBSBasicSourceSelect::checkSourceVisibility);
 	connect(ui->existingScrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this,
 		&OBSBasicSourceSelect::checkSourceVisibility);
 	connect(ui->existingScrollArea->horizontalScrollBar(), &QScrollBar::valueChanged, this,
@@ -230,7 +234,7 @@ OBSBasicSourceSelect::~OBSBasicSourceSelect()
 	App()->UpdateHotkeyFocusSetting();
 }
 
-void OBSBasicSourceSelect::checkSourceVisibility(int)
+void OBSBasicSourceSelect::checkSourceVisibility()
 {
 	QList<QAbstractButton *> buttons = sourceButtons->buttons();
 
@@ -291,7 +295,7 @@ void OBSBasicSourceSelect::updateExistingSources(int limit)
 	connect(sourceButtons, &QButtonGroup::buttonToggled, this, &OBSBasicSourceSelect::sourceButtonToggled);
 
 	ui->existingListFrame->adjustSize();
-	QTimer::singleShot(100, this, [this] { checkSourceVisibility(0); });
+	QTimer::singleShot(100, this, [this] { checkSourceVisibility(); });
 }
 
 bool OBSBasicSourceSelect::enumSourcesCallback(void *data, obs_source_t *source)
