@@ -39,7 +39,8 @@ class ThumbnailItem : public QObject {
 	void imageUpdated(QImage image);
 
 public:
-	inline ThumbnailItem(std::string uuid, OBSSource source) : uuid(uuid), weakSource(OBSGetWeakRef(source)) {}
+	ThumbnailItem(std::string uuid, OBSSource source);
+	~ThumbnailItem();
 	inline bool isNull() const { return !weakSource || obs_weak_source_expired(weakSource); }
 
 signals:
@@ -61,6 +62,9 @@ public:
 
 	inline QPixmap getPixmap() const { return item->pixmap; }
 
+	static constexpr int cx = 320;
+	static constexpr int cy = 180;
+
 signals:
 	void updateThumbnail(QPixmap pixmap);
 };
@@ -68,9 +72,12 @@ signals:
 class ThumbnailManager : public QObject {
 	Q_OBJECT
 
+	friend class ThumbnailItem;
+
 	static QPointer<ThumbnailManager> self;
 	QList<QWeakPointer<ThumbnailItem>> newThumbnails;
 	QList<QWeakPointer<ThumbnailItem>> thumbnails;
+	std::unordered_map<std::string, QPixmap> oldPixmaps;
 	QTimer updateTimer;
 
 	bool updatePixmap(QSharedPointer<ThumbnailItem> &item);

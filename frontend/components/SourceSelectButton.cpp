@@ -143,6 +143,7 @@ void SourceSelectButton::setRectVisible(bool visible)
 				thumbnail = ThumbnailManager::getThumbnail(source);
 				connect(thumbnail.get(), &Thumbnail::updateThumbnail, this,
 					&SourceSelectButton::thumbnailUpdated);
+				thumbnailUpdated(thumbnail->getPixmap());
 			}
 		}
 	} else {

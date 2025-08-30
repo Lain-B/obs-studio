@@ -29,6 +29,26 @@ using namespace std::chrono;
 
 QPointer<ThumbnailManager> ThumbnailManager::self;
 
+ThumbnailItem::ThumbnailItem(std::string uuid, OBSSource source) : uuid(uuid), weakSource(OBSGetWeakRef(source))
+{
+	auto tm = ThumbnailManager::self.get();
+	if (tm) {
+		auto it = tm->oldPixmaps.find(uuid);
+		if (it != tm->oldPixmaps.end()) {
+			pixmap = it->second;
+			tm->oldPixmaps.erase(it);
+		}
+	}
+}
+
+ThumbnailItem::~ThumbnailItem()
+{
+	auto tm = ThumbnailManager::self.get();
+	if (tm && !pixmap.isNull()) {
+		tm->oldPixmaps[uuid] = pixmap;
+	}
+}
+
 void ThumbnailItem::imageUpdated(QImage image)
 {
 	QPixmap newPixmap;
@@ -118,7 +138,7 @@ bool ThumbnailManager::updatePixmap(QSharedPointer<ThumbnailItem> &sharedPointer
 
 		auto obj = new ScreenshotObj(source);
 		obj->setSaveToFile(false);
-		obj->setSize(320, 180);
+		obj->setSize(Thumbnail::cx, Thumbnail::cy);
 
 		connect(obj, &ScreenshotObj::imageReady, item, &ThumbnailItem::imageUpdated);
 	}

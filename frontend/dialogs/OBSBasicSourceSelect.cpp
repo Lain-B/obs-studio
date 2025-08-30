@@ -24,6 +24,8 @@
 #include "qt-wrappers.hpp"
 #include "OBSApp.hpp"
 
+#include <utility/ThumbnailManager.hpp>
+
 #include "moc_OBSBasicSourceSelect.cpp"
 
 struct AddSourceData {
@@ -232,13 +234,17 @@ void OBSBasicSourceSelect::checkSourceVisibility(int)
 {
 	QList<QAbstractButton *> buttons = sourceButtons->buttons();
 
+	/* Allow some room for previous/next rows to make scrolling a bit more seamless */
+	QRect scrollAreaRect(QPoint(0, 0), ui->existingScrollArea->size());
+	scrollAreaRect.setTop(scrollAreaRect.top() - Thumbnail::cy);
+	scrollAreaRect.setBottom(scrollAreaRect.bottom() + Thumbnail::cy);
+
 	for (QAbstractButton *button : buttons) {
 		SourceSelectButton *sourceButton = qobject_cast<SourceSelectButton *>(button->parent());
 		if (sourceButton) {
 			QRect buttonRect = button->rect();
 			buttonRect.moveTo(button->mapTo(ui->existingScrollArea, buttonRect.topLeft()));
 
-			QRect scrollAreaRect(QPoint(0, 0), ui->existingScrollArea->size());
 			if (scrollAreaRect.intersects(buttonRect)) {
 				sourceButton->setRectVisible(true);
 			} else {
