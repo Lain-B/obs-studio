@@ -29,14 +29,18 @@ using namespace std::chrono;
 
 QPointer<ThumbnailManager> ThumbnailManager::self;
 
-ThumbnailItem::ThumbnailItem(std::string uuid, OBSSource source) : uuid(uuid), weakSource(OBSGetWeakRef(source))
+ThumbnailItem::ThumbnailItem(std::string uuid, OBSSource source) : uuid(uuid), weakSource(OBSGetWeakRef(source)) {}
+
+void ThumbnailItem::init(QWeakPointer<ThumbnailItem> weakActiveItem)
 {
 	auto tm = ThumbnailManager::self.get();
 	if (tm) {
-		auto it = tm->oldPixmaps.find(uuid);
-		if (it != tm->oldPixmaps.end()) {
-			pixmap = it->second;
-			tm->oldPixmaps.erase(it);
+		auto it = tm->cachedThumbnails.find(uuid);
+		if (it != tm->cachedThumbnails.end()) {
+			auto &cachedItem = it->second;
+			pixmap = cachedItem.pixmap.value_or(QPixmap());
+			cachedItem.pixmap.reset();
+			cachedItem.weakActiveItem = weakActiveItem;
 		}
 	}
 }
@@ -44,8 +48,10 @@ ThumbnailItem::ThumbnailItem(std::string uuid, OBSSource source) : uuid(uuid), w
 ThumbnailItem::~ThumbnailItem()
 {
 	auto tm = ThumbnailManager::self.get();
-	if (tm && !pixmap.isNull()) {
-		tm->oldPixmaps[uuid] = pixmap;
+	if (tm) {
+		auto &cachedItem = tm->cachedThumbnails[uuid];
+		cachedItem.pixmap = pixmap;
+		cachedItem.weakActiveItem.clear();
 	}
 }
 
@@ -86,6 +92,8 @@ QSharedPointer<Thumbnail> ThumbnailManager::getThumbnailInternal(OBSSource sourc
 	QSharedPointer<Thumbnail> thumbnail;
 	if ((obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) != 0) {
 		auto item = QSharedPointer<ThumbnailItem>::create(uuid, source);
+		item->init(item.toWeakRef());
+
 		thumbnail = QSharedPointer<Thumbnail>::create(item);
 		connect(item.get(), &ThumbnailItem::updateThumbnail, thumbnail.get(), &Thumbnail::thumbnailUpdated);
 
@@ -96,18 +104,27 @@ QSharedPointer<Thumbnail> ThumbnailManager::getThumbnailInternal(OBSSource sourc
 	return thumbnail;
 }
 
-QSharedPointer<Thumbnail> ThumbnailManager::getThumbnail(OBSSource source)
+ThumbnailManager *ThumbnailManager::get()
 {
 	if (!self) {
 		auto main = OBSBasic::Get();
 		if (!main) {
-			return QSharedPointer<Thumbnail>();
+			return nullptr;
 		}
 
 		self = new ThumbnailManager(OBSBasic::Get());
 	}
+	return self.get();
+}
 
-	return self->getThumbnailInternal(source);
+QSharedPointer<Thumbnail> ThumbnailManager::getThumbnail(OBSSource source)
+{
+	ThumbnailManager *tm = get();
+	if (tm) {
+		return tm->getThumbnailInternal(source);
+	} else {
+		return QSharedPointer<Thumbnail>();
+	}
 }
 
 bool ThumbnailManager::updatePixmap(QSharedPointer<ThumbnailItem> &sharedPointerItem)
@@ -198,5 +215,82 @@ void ThumbnailManager::updateTick()
 		thumbnails.push_back(item.toWeakRef());
 	} else {
 		thumbnails.push_front(item.toWeakRef());
+	}
+}
+
+static inline bool sourceActive(const QList<QWeakPointer<ThumbnailItem>> &thumbnails, const std::string &uuid)
+{
+	for (auto &weakActiveItem : thumbnails) {
+		auto item = weakActiveItem.toStrongRef();
+		if (item) {
+			if (item->getUuid() == uuid) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+std::optional<QPixmap> ThumbnailManager::getCachedThumbnailInternal(OBSSource source)
+{
+	std::string uuid = obs_source_get_uuid(source);
+	auto it = cachedThumbnails.find(uuid);
+	if (it != cachedThumbnails.end()) {
+		auto &cachedItem = it->second;
+		if (cachedItem.pixmap.has_value()) {
+			return cachedItem.pixmap;
+		} else {
+			auto activeItem = cachedItem.weakActiveItem.toStrongRef();
+			return !activeItem.isNull() ? std::make_optional(activeItem->pixmap) : std::nullopt;
+		}
+	} else {
+		return std::nullopt;
+	}
+}
+
+std::optional<QPixmap> ThumbnailManager::getCachedThumbnail(OBSSource source)
+{
+	auto tm = get();
+	return tm ? tm->getCachedThumbnailInternal(source) : std::nullopt;
+}
+
+void ThumbnailManager::preloadThumbnailInternal(OBSSource source, QObject *object,
+						std::function<void(QPixmap)> callback)
+{
+	std::string uuid = obs_source_get_uuid(source);
+
+	if (cachedThumbnails.find(uuid) == cachedThumbnails.end()) {
+		uint32_t sourceWidth = obs_source_get_width(source);
+		uint32_t sourceHeight = obs_source_get_height(source);
+
+		const char *name = obs_source_get_name(source);
+		blog(LOG_DEBUG, "preloading %s", name);
+
+		cachedThumbnails[uuid].pixmap = QPixmap();
+		if (sourceWidth == 0 || sourceHeight == 0) {
+			return;
+		}
+
+		auto obj = new ScreenshotObj(source);
+		obj->setSaveToFile(false);
+		obj->setSize(Thumbnail::cx, Thumbnail::cy);
+
+		connect(obj, &ScreenshotObj::imageReady, this, [=](QImage image) {
+			QPixmap pixmap;
+			if (!image.isNull()) {
+				pixmap = QPixmap::fromImage(image);
+			}
+			cachedThumbnails[uuid].pixmap = pixmap;
+
+			QMetaObject::invokeMethod(object, std::bind(callback, pixmap));
+		});
+	}
+}
+
+void ThumbnailManager::preloadThumbnail(OBSSource source, QObject *object, std::function<void(QPixmap)> callback)
+{
+	auto tm = get();
+	if (tm) {
+		tm->preloadThumbnailInternal(source, object, callback);
 	}
 }

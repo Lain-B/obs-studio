@@ -250,6 +250,22 @@ void OBSBasicSourceSelect::checkSourceVisibility()
 			buttonRect.moveTo(button->mapTo(ui->existingScrollArea, buttonRect.topLeft()));
 
 			if (scrollAreaRect.intersects(buttonRect)) {
+				sourceButton->setPreload(true);
+			} else {
+				sourceButton->setPreload(false);
+			}
+		}
+	}
+
+	scrollAreaRect = QRect(QPoint(0, 0), ui->existingScrollArea->size());
+
+	for (QAbstractButton *button : buttons) {
+		SourceSelectButton *sourceButton = qobject_cast<SourceSelectButton *>(button->parent());
+		if (sourceButton) {
+			QRect buttonRect = button->rect();
+			buttonRect.moveTo(button->mapTo(ui->existingScrollArea, buttonRect.topLeft()));
+
+			if (scrollAreaRect.intersects(buttonRect)) {
 				sourceButton->setRectVisible(true);
 			} else {
 				sourceButton->setRectVisible(false);

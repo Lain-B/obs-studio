@@ -24,6 +24,7 @@
 #include <QPixmap>
 #include <QTimer>
 
+#include <functional>
 #include <deque>
 
 class ThumbnailItem : public QObject {
@@ -36,12 +37,15 @@ class ThumbnailItem : public QObject {
 	OBSWeakSource weakSource;
 	QPixmap pixmap;
 
+	void init(QWeakPointer<ThumbnailItem> weakActiveItem);
 	void imageUpdated(QImage image);
 
 public:
 	ThumbnailItem(std::string uuid, OBSSource source);
 	~ThumbnailItem();
+
 	inline bool isNull() const { return !weakSource || obs_weak_source_expired(weakSource); }
+	inline const std::string &getUuid() const { return uuid; }
 
 signals:
 	void updateThumbnail(QPixmap pixmap);
@@ -74,10 +78,15 @@ class ThumbnailManager : public QObject {
 
 	friend class ThumbnailItem;
 
+	struct CachedItem {
+		std::optional<QPixmap> pixmap;
+		QWeakPointer<ThumbnailItem> weakActiveItem;
+	};
+
 	static QPointer<ThumbnailManager> self;
 	QList<QWeakPointer<ThumbnailItem>> newThumbnails;
 	QList<QWeakPointer<ThumbnailItem>> thumbnails;
-	std::unordered_map<std::string, QPixmap> oldPixmaps;
+	std::unordered_map<std::string, CachedItem> cachedThumbnails;
 	QTimer updateTimer;
 
 	bool updatePixmap(QSharedPointer<ThumbnailItem> &item);
@@ -86,11 +95,17 @@ class ThumbnailManager : public QObject {
 	void updateIntervalChanged(size_t newCount);
 
 	QSharedPointer<Thumbnail> getThumbnailInternal(OBSSource source);
+	std::optional<QPixmap> getCachedThumbnailInternal(OBSSource source);
+	void preloadThumbnailInternal(OBSSource source, QObject *object, std::function<void(QPixmap)> callback);
 
 	ThumbnailManager(QObject *parent);
+
+	static ThumbnailManager *get();
 
 public:
 	~ThumbnailManager();
 
 	static QSharedPointer<Thumbnail> getThumbnail(OBSSource source);
+	static std::optional<QPixmap> getCachedThumbnail(OBSSource source);
+	static void preloadThumbnail(OBSSource source, QObject *object, std::function<void(QPixmap)> callback);
 };

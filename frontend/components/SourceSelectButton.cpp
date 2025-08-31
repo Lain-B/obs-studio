@@ -56,6 +56,10 @@ SourceSelectButton::SourceSelectButton(obs_source_t *source_, QWidget *parent) :
 	image->setMinimumSize(160, 90);
 	image->setMaximumSize(160, 90);
 	image->setAlignment(Qt::AlignCenter);
+	std::optional<QPixmap> cachedThumbnail = ThumbnailManager::getCachedThumbnail(source);
+	if (cachedThumbnail.has_value()) {
+		thumbnailUpdated(*cachedThumbnail);
+	}
 
 	layout->addWidget(image);
 	layout->addWidget(label);
@@ -128,15 +132,15 @@ void SourceSelectButton::mouseMoveEvent(QMouseEvent *event)
 
 void SourceSelectButton::setRectVisible(bool visible)
 {
-	if (rectVisible == visible) {
+	OBSSource source = OBSGetStrongRef(weakSource);
+	if (!source) {
 		return;
 	}
 
-	rectVisible = visible;
+	if (rectVisible != visible) {
+		rectVisible = visible;
 
-	if (visible) {
-		OBSSource source = OBSGetStrongRef(weakSource);
-		if (source) {
+		if (visible) {
 			uint32_t flags = obs_source_get_output_flags(source);
 			bool hasVideo = (flags & OBS_SOURCE_VIDEO) == OBS_SOURCE_VIDEO;
 			if (hasVideo) {
@@ -145,23 +149,39 @@ void SourceSelectButton::setRectVisible(bool visible)
 					&SourceSelectButton::thumbnailUpdated);
 				thumbnailUpdated(thumbnail->getPixmap());
 			}
+		} else {
+			thumbnail.clear();
 		}
-	} else {
-		thumbnail.clear();
 	}
+
+	if (preload && !rectVisible) {
+		ThumbnailManager::preloadThumbnail(source, this, [=](QPixmap pixmap) {
+			const char *name = obs_source_get_name(source);
+			blog(LOG_DEBUG, "yeah it was called for %s", name);
+			thumbnailUpdated(pixmap);
+		});
+	}
+	preload = false;
+}
+
+void SourceSelectButton::setPreload(bool preload)
+{
+	this->preload = preload;
 }
 
 void SourceSelectButton::thumbnailUpdated(QPixmap pixmap)
 {
 	OBSSource source = OBSGetStrongRef(weakSource);
 	if (source) {
-		const char *id = obs_source_get_id(source);
 		if (!pixmap.isNull()) {
+			const char *name = obs_source_get_name(source);
+			blog(LOG_DEBUG, "also thumbnail updated for %s", name);
 			image->setPixmap(pixmap.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 		} else {
-			QIcon icon;
-			icon = OBSBasic::Get()->GetSourceIcon(id);
-
+			const char *name = obs_source_get_name(source);
+			blog(LOG_DEBUG, "oh wow there was no thumbnail for %s", name);
+			const char *id = obs_source_get_id(source);
+			QIcon icon = OBSBasic::Get()->GetSourceIcon(id);
 			image->setPixmap(icon.pixmap(45, 45));
 		}
 	}

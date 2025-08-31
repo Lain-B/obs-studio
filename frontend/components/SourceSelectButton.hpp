@@ -41,6 +41,7 @@ public:
 	QString text();
 
 	void setRectVisible(bool visible);
+	void setPreload(bool preload);
 
 protected:
 	void resizeEvent(QResizeEvent *event) override;
@@ -56,6 +57,7 @@ private:
 	QPushButton *button = nullptr;
 	QVBoxLayout *layout = nullptr;
 	QLabel *label = nullptr;
+	bool preload = true;
 	bool rectVisible = false;
 
 	QPoint dragStartPosition;
