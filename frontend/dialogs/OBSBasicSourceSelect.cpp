@@ -470,6 +470,8 @@ void OBSBasicSourceSelect::setSelectedSourceType(QListWidgetItem *item)
 			setTabOrder(prevTabItem, newButton->getButton());
 			prevTabItem = newButton->getButton();
 		}
+		QTimer::singleShot(100, this, [this] { checkSourceVisibility(); });
+
 	} else if (sourceTypeId.compare("group") == 0) {
 		obs_enum_sources(enumGroupsCallback, this);
 	} else {

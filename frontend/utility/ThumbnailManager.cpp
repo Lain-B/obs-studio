@@ -136,12 +136,6 @@ bool ThumbnailManager::updatePixmap(QSharedPointer<ThumbnailItem> &sharedPointer
 		return true;
 	}
 
-	{
-		OBSSource source = OBSGetStrongRef(item->weakSource);
-		blog(LOG_DEBUG, "cur number of thumbnails: %d. thumbnail updated: %s", (int)thumbnails.size() + 1,
-		     obs_source_get_name(source));
-	}
-
 	QPixmap pixmap;
 	item->pixmap = pixmap;
 
@@ -262,9 +256,6 @@ void ThumbnailManager::preloadThumbnailInternal(OBSSource source, QObject *objec
 	if (cachedThumbnails.find(uuid) == cachedThumbnails.end()) {
 		uint32_t sourceWidth = obs_source_get_width(source);
 		uint32_t sourceHeight = obs_source_get_height(source);
-
-		const char *name = obs_source_get_name(source);
-		blog(LOG_DEBUG, "preloading %s", name);
 
 		cachedThumbnails[uuid].pixmap = QPixmap();
 		if (sourceWidth == 0 || sourceHeight == 0) {
